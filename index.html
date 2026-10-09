@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101318">
+  <title>SkipSense — Gemma Counting Experiment</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #101318; color: #f4f6f8; }
+    main { max-width: 760px; margin: auto; padding: 22px 16px 40px; }
+    h1 { margin-bottom: 4px; } .muted { color: #aab3c0; }
+    video { width: 100%; max-height: 55vh; background: #050607; border-radius: 16px; object-fit: cover; }
+    .panel { background: #1a2029; padding: 16px; border-radius: 16px; margin: 16px 0; }
+    .buttons { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+    button { border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    #start { background: #b7f397; color: #14200f; } #stop { background: #ffcc80; color: #281800; }
+    #analyze { background: #b7c9ff; color: #101a37; }
+    .result { font-size: 1.02rem; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .count { font-size: 3rem; font-weight: 800; letter-spacing: -1px; }
+    .small { font-size: .9rem; } .pill { display: inline-block; border: 1px solid #485364; border-radius: 99px; padding: 4px 9px; font-size: .8rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🪢 SkipSense</h1>
+  <div class="muted">Experiment: can Gemma count skips from sampled live-camera frames?</div>
+
+  <section class="panel">
+    <video id="video" autoplay muted playsinline></video>
+    <div class="buttons">
+      <button id="start">Start camera + record 8 seconds</button>
+      <button id="stop" disabled>Stop recording</button>
+      <button id="analyze" disabled>Ask Gemma to count</button>
+    </div>
+    <div id="status" class="muted">Allow camera access, stand far enough back for your whole body to be visible, then record a short clip.</div>
+    <p class="small muted">This experiment samples one frame every 250 ms (about 4 frames/second). Gemma analyzes the ordered frames after recording; this is not yet a live-updating counter.</p>
+  </section>
+
+  <section class="panel">
+    <div class="muted">Gemma's result</div>
+    <div id="count" class="count">—</div>
+    <div id="result" class="result">No analysis yet.</div>
+  </section>
+
+  <section class="panel">
+    <div class="pill">Cloud model: <span id="model">checking…</span></div>
+    <p class="small muted">Frames are sent to the SkipSense backend and then to Ollama Cloud for analysis. Don't use this prototype for sensitive video.</p>
+  </section>
+</main>
+<script>
+const video = document.querySelector("#video");
+const startBtn = document.querySelector("#start");
+const stopBtn = document.querySelector("#stop");
+const analyzeBtn = document.querySelector("#analyze");
+const statusEl = document.querySelector("#status");
+const countEl = document.querySelector("#count");
+const resultEl = document.querySelector("#result");
+const modelEl = document.querySelector("#model");
+let stream = null, captureTimer = null, stopTimer = null, frames = [], recording = false;
+const intervalMs = 250;
+
+fetch("/api/health").then(r => r.json()).then(data => {
+  modelEl.textContent = data.model || "unknown";
+  if (!data.cloud_key_configured) statusEl.textContent = "Server needs its Ollama API key configured before Gemma analysis will work.";
+}).catch(() => { modelEl.textContent = "backend unavailable"; });
+
+async function startCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera access requires HTTPS. Open the deployed HTTPS website.");
+  }
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
+  });
+  video.srcObject = stream;
+  await video.play();
+}
+function captureFrame() {
+  if (!video.videoWidth || !video.videoHeight) return;
+  const canvas = document.createElement("canvas");
+  const scale = Math.min(1, 640 / video.videoWidth);
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  frames.push(canvas.toDataURL("image/jpeg", 0.60));
+}
+function stopRecording() {
+  if (!recording) return;
+  recording = false;
+  clearInterval(captureTimer);
+  clearTimeout(stopTimer);
+  captureTimer = stopTimer = null;
+  stopBtn.disabled = true;
+  analyzeBtn.disabled = frames.length < 4;
+  startBtn.disabled = false;
+  statusEl.textContent = `Captured ${frames.length} ordered frames. Ask Gemma to count them.`;
+}
+startBtn.addEventListener("click", async () => {
+  try {
+    startBtn.disabled = true;
+    analyzeBtn.disabled = true;
+    countEl.textContent = "—";
+    resultEl.textContent = "No analysis yet.";
+    frames = [];
+    if (!stream) await startCamera();
+    recording = true;
+    stopBtn.disabled = false;
+    statusEl.textContent = "Recording… jump naturally and keep your full body visible.";
+    captureFrame();
+    captureTimer = setInterval(captureFrame, intervalMs);
+    stopTimer = setTimeout(stopRecording, 8000);
+  } catch (e) {
+    startBtn.disabled = false;
+    statusEl.textContent = `Camera error: ${e.message}. Use the deployed HTTPS URL and allow camera permission.`;
+  }
+});
+stopBtn.addEventListener("click", stopRecording);
+analyzeBtn.addEventListener("click", async () => {
+  analyzeBtn.disabled = true;
+  statusEl.textContent = `Sending ${frames.length} frames to Gemma Cloud… this may take a while.`;
+  countEl.textContent = "…";
+  try {
+    const res = await fetch("/api/count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ frames, interval_ms: intervalMs })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    countEl.textContent = Number.isInteger(data.completed_skips) ? data.completed_skips : "Uncertain";
+    resultEl.textContent = `Confidence: ${data.confidence || "unknown"}\n${data.reason || ""}\nLimitations: ${data.limitations || "Not reported"}\n\nModel: ${data.model}\nFrames analyzed: ${data.frames_analyzed}`;
+    statusEl.textContent = "Analysis finished. Repeat with a clip where you know the true count.";
+  } catch (e) {
+    countEl.textContent = "Error";
+    resultEl.textContent = e.message;
+    statusEl.textContent = "Could not reach Gemma Cloud. Check server logs and model/API-key settings.";
+  } finally {
+    analyzeBtn.disabled = false;
+  }
+});
+window.addEventListener("beforeunload", () => {
+  if (stream) stream.getTracks().forEach(track => track.stop());
+});
+</script>
+</body>
+</html>
