@@ -135,11 +135,12 @@
     </div>
     <p class="muted">
       Camera access requires localhost or HTTPS. Stand far enough back to fit
-      your entire body and both feet inside the preview. Live mode sends one sampled
-      frame about every 200 ms, which keeps bandwidth and CPU practical while
-      adding up to roughly one sample of latency.
+      your entire body and both feet inside the preview. Live mode targets 8
+      sampled frames per second with one request in flight, balancing fast skips
+      against CPU cost and keeping latency bounded.
     </p>
     <p id="liveGuidance" class="warning">Start the camera and keep your full body visible.</p>
+    <p id="liveDiagnostics" class="muted"></p>
     <div id="status" class="status" role="status">Ready.</div>
   </section>
 
@@ -250,6 +251,7 @@
   let liveStartedAt = 0;
   let liveElapsedSeconds = 0;
   let liveLoopToken = 0;
+  const LIVE_SAMPLE_INTERVAL_MS = 125;
 
   function selectedFps() {
     return Number($("samplingFps").value);
@@ -344,10 +346,14 @@
   }
 
   async function sampleLiveWorkout(token) {
+    let sampleCount = 0;
+    let sampleWindowStarted = performance.now();
     while (token === liveLoopToken && liveState === "running" && liveSessionId) {
+      const sampleStarted = performance.now();
       try {
         const frame = captureFrame(camera);
         const elapsed = (performance.now() - liveStartedAt) / 1000;
+        const requestStarted = performance.now();
         const response = await fetch("/api/live/frame", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -357,6 +363,7 @@
             elapsed_seconds: elapsed
           })
         });
+        const requestDuration = performance.now() - requestStarted;
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
         $("liveCount").textContent = data.completed_skips ?? 0;
@@ -366,6 +373,13 @@
         $("liveGuidance").textContent = data.guidance || "";
         drawLandmarks(data.landmarks);
         liveElapsedSeconds = data.elapsed_seconds || elapsed;
+        sampleCount += 1;
+        const windowElapsed = (performance.now() - sampleWindowStarted) / 1000;
+        const actualFps = windowElapsed >= 1
+          ? (sampleCount / windowElapsed).toFixed(1)
+          : "warming";
+        $("liveDiagnostics").textContent =
+          `Samples: ${sampleCount}; actual rate: ${actualFps} FPS; request: ${Math.round(requestDuration)} ms; server: ${Math.round((data.processing_time_seconds || 0) * 1000)} ms`;
         status(`Live tracking: ${data.frames_analyzed} sampled frames.`);
       } catch (error) {
         $("liveGuidance").textContent = `Live tracking error: ${error.message}`;
@@ -373,6 +387,11 @@
         updateLiveControls();
         break;
       }
+      const waitMs = Math.max(
+        0,
+        LIVE_SAMPLE_INTERVAL_MS - (performance.now() - sampleStarted)
+      );
+      if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
     }
   }
 
@@ -452,6 +471,7 @@
     stream = null;
     camera.srcObject = null;
     drawLandmarks([]);
+    $("liveDiagnostics").textContent = "";
     $("startCamera").disabled = false;
     $("stopCamera").disabled = true;
     updateLiveControls();
@@ -472,6 +492,7 @@
       $("liveOverlayCount").textContent = "0";
       $("liveElapsed").textContent = "0:00";
       $("livePace").textContent = "0";
+      $("liveDiagnostics").textContent = "Sampling target: 8 FPS; one request in flight.";
       $("liveGuidance").textContent = "Starting pose tracking…";
       updateLiveControls();
       const token = ++liveLoopToken;
@@ -507,6 +528,7 @@
     $("liveElapsed").textContent = "0:00";
     $("livePace").textContent = "0";
     $("liveGuidance").textContent = "Start the workout when your full body is visible.";
+    $("liveDiagnostics").textContent = "";
     drawLandmarks([]);
     status("Live Workout reset.");
   });

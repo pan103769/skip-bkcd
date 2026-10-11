@@ -568,7 +568,7 @@ def live_start():
     session_id = uuid4().hex
     with LIVE_SESSIONS_LOCK:
         LIVE_SESSIONS[session_id] = LiveSession()
-    return {"session_id": session_id, "sample_fps": 5}
+    return {"session_id": session_id, "sample_fps": 8}
 
 
 @app.post("/api/live/frame")

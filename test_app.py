@@ -30,6 +30,16 @@ class JumpCycleTests(unittest.TestCase):
         peaks, _ = detect_jump_cycles(signal, interval_ms)
         self.assertLessEqual(len(peaks), 3)
 
+    def test_fast_normal_and_slow_live_rates(self):
+        interval_ms = 125
+        time = np.arange(160) * interval_ms / 1000
+        expected_ranges = ((0.5, 7, 11), (0.8, 12, 18), (1.2, 19, 27))
+        for frequency, minimum, maximum in expected_ranges:
+            signal = 0.08 * np.sin(2 * np.pi * frequency * time)
+            peaks, quality = detect_jump_cycles(signal, interval_ms)
+            self.assertTrue(minimum <= len(peaks) <= maximum)
+            self.assertGreater(quality["cycle_regularity"], 0.8)
+
     def test_missing_samples_are_interpolated(self):
         interval_ms = 187
         time = np.arange(120) * interval_ms / 1000
@@ -103,6 +113,16 @@ class SamplingContractTests(unittest.TestCase):
 
 
 class LiveSessionTests(unittest.TestCase):
+    def test_live_start_advertises_bounded_sample_rate(self):
+        response = TestClient(app.app).post("/api/live/start")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["sample_fps"], 8)
+        stop = TestClient(app.app).post(
+            "/api/live/stop", json={"session_id": data["session_id"]}
+        )
+        self.assertEqual(stop.status_code, 200)
+
     def test_live_session_counts_synthetic_ankle_motion(self):
         class PoseLandmark:
             LEFT_HIP = 23
