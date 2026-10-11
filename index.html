@@ -1,148 +1,582 @@
+
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#101318">
-  <title>SkipSense — Gemma Counting Experiment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10131a">
+  <title>SkipSense — AI Jump-Rope Coach</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #101318; color: #f4f6f8; }
-    main { max-width: 760px; margin: auto; padding: 22px 16px 40px; }
-    h1 { margin-bottom: 4px; } .muted { color: #aab3c0; }
-    video { width: 100%; max-height: 55vh; background: #050607; border-radius: 16px; object-fit: cover; }
-    .panel { background: #1a2029; padding: 16px; border-radius: 16px; margin: 16px 0; }
-    .buttons { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
-    button { border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
-    button:disabled { opacity: .4; cursor: not-allowed; }
-    #start { background: #b7f397; color: #14200f; } #stop { background: #ffcc80; color: #281800; }
-    #analyze { background: #b7c9ff; color: #101a37; }
-    .result { font-size: 1.02rem; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
-    .count { font-size: 3rem; font-weight: 800; letter-spacing: -1px; }
-    .small { font-size: .9rem; } .pill { display: inline-block; border: 1px solid #485364; border-radius: 99px; padding: 4px 9px; font-size: .8rem; }
+    :root {
+      color-scheme: dark;
+      --bg: #10131a;
+      --panel: #191f2b;
+      --muted: #aab4c5;
+      --line: #30394a;
+      --accent: #9be36d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: #f5f7fb;
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+    main { width: min(920px, calc(100% - 28px)); margin: 30px auto; }
+    h1 { font-size: clamp(2rem, 5vw, 3rem); margin-bottom: 4px; }
+    h2 { margin-top: 0; }
+    .muted { color: var(--muted); }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      margin-top: 18px;
+    }
+    video {
+      display: block;
+      width: 100%;
+      max-height: 55vh;
+      background: #05070a;
+      border-radius: 12px;
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 11px 16px;
+      background: var(--accent);
+      color: #10150d;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary { background: #30394a; color: white; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 12px;
+    }
+    .stat {
+      background: #111620;
+      border: 1px solid var(--line);
+      padding: 14px;
+      border-radius: 12px;
+    }
+    .label { color: var(--muted); font-size: .88rem; }
+    .value { font-size: 1.8rem; font-weight: 800; overflow-wrap: anywhere; }
+    .status { margin-top: 12px; min-height: 1.5em; color: var(--muted); white-space: pre-wrap; }
+    .warning { border-left: 3px solid #f4c56a; padding-left: 12px; color: #e8d9b8; }
+    .live-stage { position: relative; }
+    #landmarkOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .live-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+    .live-metric { background: #111620; border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; }
+    .live-number { font-size: clamp(1.8rem, 9vw, 3rem); font-weight: 800; line-height: 1; }
+    select, input[type="file"], input[type="number"] { display: block; margin-top: 6px; padding: 10px; max-width: 100%; font: inherit; }
+    textarea { width: 100%; min-height: 100px; }
   </style>
 </head>
 <body>
 <main>
-  <h1>🪢 SkipSense</h1>
-  <div class="muted">Experiment: can Gemma count skips from sampled live-camera frames?</div>
+  <h1>SkipSense 🪢</h1>
+  <p class="muted">
+    Experimental jump counter with Gemma-powered workout analysis.
+    Keep your full body visible in the camera.
+  </p>
 
   <section class="panel">
-    <video id="video" autoplay muted playsinline></video>
-    <div class="buttons">
-      <button id="start">Start camera + record 8 seconds</button>
-      <button id="stop" disabled>Stop recording</button>
-      <button id="analyze" disabled>Ask Gemma to count</button>
+    <h2>Live Workout</h2>
+    <div class="live-stage">
+      <video id="camera" autoplay muted playsinline></video>
+      <canvas id="landmarkOverlay"></canvas>
     </div>
-    <div id="status" class="muted">Allow camera access, stand far enough back for your whole body to be visible, then record a short clip.</div>
-    <p class="small muted">This experiment samples one frame every 250 ms (about 4 frames/second). Gemma analyzes the ordered frames after recording; this is not yet a live-updating counter.</p>
+    <div class="controls">
+      <button id="startCamera">Start camera</button>
+      <button id="startWorkout" class="secondary" disabled>Start workout</button>
+      <button id="pauseWorkout" class="secondary" disabled>Pause</button>
+      <button id="resumeWorkout" class="secondary" disabled>Resume</button>
+      <button id="resetWorkout" class="secondary" disabled>Reset</button>
+      <button id="stopCamera" class="secondary" disabled>Stop camera</button>
+    </div>
+    <div class="live-metrics">
+      <div class="live-metric"><div class="label">Live skips</div><div class="live-number" id="liveCount">0</div></div>
+      <div class="live-metric"><div class="label">Elapsed</div><div class="live-number" id="liveElapsed">0:00</div></div>
+      <div class="live-metric"><div class="label">Skips/min</div><div class="live-number" id="livePace">0</div></div>
+    </div>
+    <p class="muted">
+      Camera access requires localhost or HTTPS. Live mode sends one sampled
+      frame about every 200 ms, which keeps bandwidth and CPU practical while
+      adding up to roughly one sample of latency.
+    </p>
+    <p id="liveGuidance" class="warning">Start the camera and keep your full body visible.</p>
+    <div id="status" class="status" role="status">Ready.</div>
   </section>
 
   <section class="panel">
-    <div class="muted">Gemma's result</div>
-    <div id="count" class="count">—</div>
-    <div id="result" class="result">No analysis yet.</div>
+    <h2>Analyze a video file</h2>
+    <p class="muted">Choose a short video of one person skipping.</p>
+    <label for="samplingFps">Sampling rate</label>
+    <select id="samplingFps">
+      <option value="15">15 FPS</option>
+      <option value="30">30 FPS</option>
+      <option value="60">60 FPS</option>
+    </select>
+    <input id="videoFile" type="file" accept="video/*">
+    <div class="controls">
+      <button id="analyzeFile" class="secondary">Analyze video</button>
+    </div>
   </section>
 
   <section class="panel">
-    <div class="pill">Cloud model: <span id="model">checking…</span></div>
-    <p class="small muted">Frames are sent to the SkipSense backend and then to Ollama Cloud for analysis. Don't use this prototype for sensitive video.</p>
+    <h2>Workout results</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="label">Estimated skips</div>
+        <div class="value" id="count">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Duration</div>
+        <div class="value" id="duration">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Estimated pace</div>
+        <div class="value" id="pace">—</div>
+        <div class="label">skips/min</div>
+      </div>
+      <div class="stat">
+        <div class="label">Confidence</div>
+        <div class="value" id="confidence">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Pose coverage</div>
+        <div class="value" id="coverage">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Frames analyzed</div>
+        <div class="value" id="framesAnalyzed">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Sampling rate</div>
+        <div class="value" id="samplingRate">—</div>
+        <div class="label">frames/sec</div>
+      </div>
+      <div class="stat">
+        <div class="label">Selected rate</div>
+        <div class="value" id="selectedSamplingRate">—</div>
+        <div class="label">requested FPS</div>
+      </div>
+      <div class="stat">
+        <div class="label">Processing time</div>
+        <div class="value" id="processingTime">—</div>
+        <div class="label">seconds</div>
+      </div>
+    </div>
+    <p id="reason" class="muted"></p>
+    <p id="signalDiagnostics" class="muted"></p>
+    <p id="limitations" class="warning"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Gemma AI coach</h2>
+    <p class="muted">
+      After counting a clip, enter observed rest time if applicable.
+      Gemma interprets the metrics; it does not measure fatigue directly.
+    </p>
+    <label for="restSeconds">Rest time in seconds</label>
+    <input id="restSeconds" type="number" min="0" max="3600" value="0">
+    <div class="controls">
+      <button id="coach">Analyze workout with Gemma</button>
+    </div>
+    <div id="coachStatus" class="status" role="status"></div>
+    <p id="coachResult"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Known limitation</h2>
+    <p class="warning">
+      This is a prototype. Hip movement is a proxy for jumping, not proof of
+      rope rotation. Results can be wrong. Compare the estimate with a manual
+      count before relying on it.
+    </p>
   </section>
 </main>
+
+<canvas id="canvas" hidden></canvas>
 <script>
-const video = document.querySelector("#video");
-const startBtn = document.querySelector("#start");
-const stopBtn = document.querySelector("#stop");
-const analyzeBtn = document.querySelector("#analyze");
-const statusEl = document.querySelector("#status");
-const countEl = document.querySelector("#count");
-const resultEl = document.querySelector("#result");
-const modelEl = document.querySelector("#model");
-let stream = null, captureTimer = null, stopTimer = null, frames = [], recording = false;
-const intervalMs = 250;
+(() => {
+  const $ = id => document.getElementById(id);
+  const camera = $("camera");
+  const canvas = $("canvas");
+  const ctx = canvas.getContext("2d");
+  const landmarkOverlay = $("landmarkOverlay");
+  const landmarkCtx = landmarkOverlay.getContext("2d");
+  const MAX_FRAMES = 2000;
+  let stream = null;
+  let busy = false;
+  let lastResult = null;
+  let liveSessionId = null;
+  let liveState = "idle";
+  let liveStartedAt = 0;
+  let liveElapsedSeconds = 0;
+  let liveLoopToken = 0;
 
-fetch("/api/health").then(r => r.json()).then(data => {
-  modelEl.textContent = data.model || "unknown";
-  if (!data.cloud_key_configured) statusEl.textContent = "Server needs its Ollama API key configured before Gemma analysis will work.";
-}).catch(() => { modelEl.textContent = "backend unavailable"; });
+  function selectedFps() {
+    return Number($("samplingFps").value);
+  }
 
-async function startCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Camera access requires HTTPS. Open the deployed HTTPS website.");
+  function status(message) {
+    $("status").textContent = message;
   }
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
-  });
-  video.srcObject = stream;
-  await video.play();
-}
-function captureFrame() {
-  if (!video.videoWidth || !video.videoHeight) return;
-  const canvas = document.createElement("canvas");
-  const scale = Math.min(1, 640 / video.videoWidth);
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-  frames.push(canvas.toDataURL("image/jpeg", 0.60));
-}
-function stopRecording() {
-  if (!recording) return;
-  recording = false;
-  clearInterval(captureTimer);
-  clearTimeout(stopTimer);
-  captureTimer = stopTimer = null;
-  stopBtn.disabled = true;
-  analyzeBtn.disabled = frames.length < 4;
-  startBtn.disabled = false;
-  statusEl.textContent = `Captured ${frames.length} ordered frames. Ask Gemma to count them.`;
-}
-startBtn.addEventListener("click", async () => {
-  try {
-    startBtn.disabled = true;
-    analyzeBtn.disabled = true;
-    countEl.textContent = "—";
-    resultEl.textContent = "No analysis yet.";
-    frames = [];
-    if (!stream) await startCamera();
-    recording = true;
-    stopBtn.disabled = false;
-    statusEl.textContent = "Recording… jump naturally and keep your full body visible.";
-    captureFrame();
-    captureTimer = setInterval(captureFrame, intervalMs);
-    stopTimer = setTimeout(stopRecording, 8000);
-  } catch (e) {
-    startBtn.disabled = false;
-    statusEl.textContent = `Camera error: ${e.message}. Use the deployed HTTPS URL and allow camera permission.`;
+
+  function captureFrame(source) {
+    const width = source.videoWidth || source.width;
+    const height = source.videoHeight || source.height;
+    if (!width || !height) throw new Error("Video frame is not ready.");
+
+    const scale = Math.min(1, 640 / width, 640 / height);
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.78);
   }
-});
-stopBtn.addEventListener("click", stopRecording);
-analyzeBtn.addEventListener("click", async () => {
-  analyzeBtn.disabled = true;
-  statusEl.textContent = `Sending ${frames.length} frames to Gemma Cloud… this may take a while.`;
-  countEl.textContent = "…";
-  try {
-    const res = await fetch("/api/count", {
+
+  function formatElapsed(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.floor(seconds % 60).toString().padStart(2, "0");
+    return `${minutes}:${remainder}`;
+  }
+
+  function drawLandmarks(points) {
+    landmarkOverlay.width = camera.videoWidth || 1;
+    landmarkOverlay.height = camera.videoHeight || 1;
+    landmarkCtx.clearRect(0, 0, landmarkOverlay.width, landmarkOverlay.height);
+    if (!points || !points.length) return;
+
+    const connections = [
+      [11, 12], [11, 23], [12, 24], [23, 24],
+      [23, 25], [25, 27], [24, 26], [26, 28],
+      [11, 13], [13, 15], [12, 14], [14, 16]
+    ];
+    landmarkCtx.strokeStyle = "#9be36d";
+    landmarkCtx.lineWidth = Math.max(2, landmarkOverlay.width / 320);
+    for (const [start, end] of connections) {
+      if (!points[start] || !points[end]) continue;
+      landmarkCtx.beginPath();
+      landmarkCtx.moveTo(points[start].x * landmarkOverlay.width, points[start].y * landmarkOverlay.height);
+      landmarkCtx.lineTo(points[end].x * landmarkOverlay.width, points[end].y * landmarkOverlay.height);
+      landmarkCtx.stroke();
+    }
+    landmarkCtx.fillStyle = "#ffffff";
+    for (const point of points) {
+      if (point.visibility < 0.25) continue;
+      landmarkCtx.beginPath();
+      landmarkCtx.arc(point.x * landmarkOverlay.width, point.y * landmarkOverlay.height, 4, 0, 2 * Math.PI);
+      landmarkCtx.fill();
+    }
+  }
+
+  function updateLiveControls() {
+    const cameraReady = Boolean(stream);
+    $("startWorkout").disabled = !cameraReady || liveState === "running";
+    $("pauseWorkout").disabled = liveState !== "running";
+    $("resumeWorkout").disabled = liveState !== "paused";
+    $("resetWorkout").disabled = !cameraReady && !liveSessionId;
+  }
+
+  async function stopLiveSession() {
+    liveLoopToken += 1;
+    const sessionId = liveSessionId;
+    liveSessionId = null;
+    liveState = "idle";
+    if (sessionId) {
+      try {
+        await fetch("/api/live/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+      } catch (_) {
+        // Camera cleanup should still complete if the server is unavailable.
+      }
+    }
+    updateLiveControls();
+  }
+
+  async function sampleLiveWorkout(token) {
+    while (token === liveLoopToken && liveState === "running" && liveSessionId) {
+      const frame = captureFrame(camera);
+      const elapsed = (performance.now() - liveStartedAt) / 1000;
+      try {
+        const response = await fetch("/api/live/frame", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: liveSessionId,
+            frame,
+            elapsed_seconds: elapsed
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        $("liveCount").textContent = data.completed_skips ?? 0;
+        $("liveElapsed").textContent = formatElapsed(data.elapsed_seconds || elapsed);
+        $("livePace").textContent = data.estimated_skips_per_minute ?? 0;
+        $("liveGuidance").textContent = data.guidance || "";
+        drawLandmarks(data.landmarks);
+        liveElapsedSeconds = data.elapsed_seconds || elapsed;
+        status(`Live tracking: ${data.frames_analyzed} sampled frames.`);
+      } catch (error) {
+        $("liveGuidance").textContent = `Live tracking error: ${error.message}`;
+        liveState = "paused";
+        updateLiveControls();
+        break;
+      }
+    }
+  }
+
+  async function sendFrames(frames, intervalMs, durationSeconds, requestedFps) {
+    if (frames.length < 8) throw new Error("At least 8 frames are required.");
+
+    status(`Analyzing ${frames.length} frames…`);
+    const response = await fetch("/api/count", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ frames, interval_ms: intervalMs })
+      body: JSON.stringify({
+        frames,
+        interval_ms: Math.max(50, Math.round(intervalMs)),
+        duration_seconds: durationSeconds,
+        requested_fps: requestedFps
+      })
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    countEl.textContent = Number.isInteger(data.completed_skips) ? data.completed_skips : "Uncertain";
-    resultEl.textContent = `Confidence: ${data.confidence || "unknown"}\n${data.reason || ""}\nLimitations: ${data.limitations || "Not reported"}\n\nModel: ${data.model}\nFrames analyzed: ${data.frames_analyzed}`;
-    statusEl.textContent = "Analysis finished. Repeat with a clip where you know the true count.";
-  } catch (e) {
-    countEl.textContent = "Error";
-    resultEl.textContent = e.message;
-    statusEl.textContent = "Could not reach Gemma Cloud. Check server logs and model/API-key settings.";
-  } finally {
-    analyzeBtn.disabled = false;
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+
+    lastResult = data;
+    $("count").textContent = data.completed_skips ?? "Unknown";
+    $("duration").textContent =
+      data.duration_seconds == null ? "—" : `${data.duration_seconds}s`;
+    $("pace").textContent =
+      data.estimated_skips_per_minute == null
+        ? "—" : data.estimated_skips_per_minute;
+    $("confidence").textContent = data.confidence || "—";
+    $("coverage").textContent = data.signal_quality?.valid_fraction == null
+      ? "—" : `${Math.round(data.signal_quality.valid_fraction * 100)}%`;
+    $("framesAnalyzed").textContent = data.frames_analyzed ?? "—";
+    $("samplingRate").textContent = data.sampling_fps ?? "—";
+    $("selectedSamplingRate").textContent = data.requested_fps ?? "—";
+    $("processingTime").textContent = data.processing_time_seconds ?? "—";
+    $("reason").textContent = data.reason || "";
+    const diagnostics = data.detection_diagnostics || {};
+    const quality = data.signal_quality || {};
+    const peakEvidence = (quality.peak_timestamps_seconds || []).map(
+      (time, index) => `${time}s/${quality.peak_prominences?.[index] ?? "—"}`
+    ).join(", ");
+    $("signalDiagnostics").textContent = diagnostics.signal_used
+      ? `Signal: ${diagnostics.signal_used}; valid samples: ${diagnostics.valid_signal_samples ?? 0}; range: ${quality.signal_range ?? "—"}; peaks: ${diagnostics.detected_peaks ?? 0} (${peakEvidence || "none"})`
+      : "";
+    $("limitations").textContent = data.limitations || "";
+    status("Finished. Compare the count with the actual video.");
   }
-});
-window.addEventListener("beforeunload", () => {
-  if (stream) stream.getTracks().forEach(track => track.stop());
-});
+
+  $("startCamera").addEventListener("click", async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access requires HTTPS or localhost.");
+      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      camera.srcObject = stream;
+      await camera.play();
+      $("startCamera").disabled = true;
+      updateLiveControls();
+      $("stopCamera").disabled = false;
+      status("Camera ready.");
+    } catch (error) {
+      $("liveGuidance").textContent = `Camera unavailable: ${error.message}`;
+      status("Camera permission is required for Live Workout.");
+    }
+  });
+
+  $("stopCamera").addEventListener("click", async () => {
+    await stopLiveSession();
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    camera.srcObject = null;
+    drawLandmarks([]);
+    $("startCamera").disabled = false;
+    $("stopCamera").disabled = true;
+    updateLiveControls();
+    status("Camera stopped.");
+  });
+
+  $("startWorkout").addEventListener("click", async () => {
+    if (busy || !stream || liveState === "running") return;
+    try {
+      const response = await fetch("/api/live/start", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      liveSessionId = data.session_id;
+      liveElapsedSeconds = 0;
+      liveStartedAt = performance.now();
+      liveState = "running";
+      $("liveCount").textContent = "0";
+      $("liveElapsed").textContent = "0:00";
+      $("livePace").textContent = "0";
+      $("liveGuidance").textContent = "Starting pose tracking…";
+      updateLiveControls();
+      const token = ++liveLoopToken;
+      sampleLiveWorkout(token);
+    } catch (error) {
+      $("liveGuidance").textContent = `Could not start Live Workout: ${error.message}`;
+      status("Live Workout could not start.");
+    }
+  });
+
+  $("pauseWorkout").addEventListener("click", () => {
+    liveElapsedSeconds = (performance.now() - liveStartedAt) / 1000;
+    liveState = "paused";
+    liveLoopToken += 1;
+    updateLiveControls();
+    status("Live Workout paused.");
+  });
+
+  $("resumeWorkout").addEventListener("click", () => {
+    liveStartedAt = performance.now() - liveElapsedSeconds * 1000;
+    liveState = "running";
+    updateLiveControls();
+    const token = ++liveLoopToken;
+    sampleLiveWorkout(token);
+    status("Live Workout resumed.");
+  });
+
+  $("resetWorkout").addEventListener("click", async () => {
+    await stopLiveSession();
+    liveElapsedSeconds = 0;
+    $("liveCount").textContent = "0";
+    $("liveElapsed").textContent = "0:00";
+    $("livePace").textContent = "0";
+    $("liveGuidance").textContent = "Start the workout when your full body is visible.";
+    drawLandmarks([]);
+    status("Live Workout reset.");
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (liveSessionId && navigator.sendBeacon) {
+      const payload = new Blob(
+        [JSON.stringify({ session_id: liveSessionId })],
+        { type: "application/json" }
+      );
+      navigator.sendBeacon("/api/live/stop", payload);
+    }
+  });
+
+  $("analyzeFile").addEventListener("click", async () => {
+    if (busy || liveState === "running") return;
+    const file = $("videoFile").files[0];
+    if (!file) {
+      status("Choose a video file first.");
+      return;
+    }
+
+    busy = true;
+    $("analyzeFile").disabled = true;
+    status("Reading video and sampling ordered frames…");
+    const url = URL.createObjectURL(file);
+    const source = document.createElement("video");
+    source.muted = true;
+    source.playsInline = true;
+    source.preload = "auto";
+    source.src = url;
+
+    try {
+      await new Promise((resolve, reject) => {
+        source.onloadedmetadata = resolve;
+        source.onerror = () => reject(new Error("Could not read video."));
+      });
+
+      if (!Number.isFinite(source.duration) || source.duration <= 0) {
+        throw new Error("Video duration is unavailable.");
+      }
+
+      const sampleFps = selectedFps();
+      const frameCount = Math.min(
+        MAX_FRAMES,
+        Math.max(8, Math.ceil(source.duration * sampleFps))
+      );
+      const intervalSeconds = source.duration / Math.max(1, frameCount - 1);
+      const frames = [];
+
+      for (let i = 0; i < frameCount; i++) {
+        await new Promise((resolve, reject) => {
+          source.onseeked = resolve;
+          source.onerror = () => reject(new Error("Could not seek in video."));
+          source.currentTime = Math.min(
+            Math.max(0, source.duration - 0.02),
+            i * intervalSeconds
+          );
+        });
+        frames.push(captureFrame(source));
+      }
+
+      const actualIntervalMs = source.duration * 1000 / Math.max(1, frameCount - 1);
+      await sendFrames(frames, actualIntervalMs, source.duration, sampleFps);
+    } catch (error) {
+      status(`Video analysis failed: ${error.message}`);
+    } finally {
+      URL.revokeObjectURL(url);
+      source.removeAttribute("src");
+      source.load();
+      busy = false;
+      $("analyzeFile").disabled = false;
+    }
+  });
+
+  $("coach").addEventListener("click", async () => {
+    if (!lastResult || lastResult.completed_skips == null) {
+      $("coachStatus").textContent = "Count a video successfully first.";
+      return;
+    }
+
+    const restSeconds = Number($("restSeconds").value);
+    if (!Number.isFinite(restSeconds) || restSeconds < 0 || restSeconds > 3600) {
+      $("coachStatus").textContent = "Enter a valid rest time from 0 to 3600 seconds.";
+      return;
+    }
+
+    $("coach").disabled = true;
+    $("coachStatus").textContent = "Asking Gemma to analyze the workout…";
+    $("coachResult").textContent = "";
+
+    try {
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          completed_skips: lastResult.completed_skips,
+          duration_seconds: lastResult.duration_seconds,
+          rest_seconds: restSeconds
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+
+      $("coachResult").textContent = data.analysis;
+      $("coachStatus").textContent = `Analysis generated by ${data.model}.`;
+    } catch (error) {
+      $("coachStatus").textContent = `Coach error: ${error.message}`;
+    } finally {
+      $("coach").disabled = false;
+    }
+  });
+})();
 </script>
 </body>
 </html>
