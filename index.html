@@ -36,7 +36,8 @@
     video {
       display: block;
       width: 100%;
-      max-height: 55vh;
+      height: 100%;
+      object-fit: contain;
       background: #05070a;
       border-radius: 12px;
     }
@@ -68,8 +69,32 @@
     .value { font-size: 1.8rem; font-weight: 800; overflow-wrap: anywhere; }
     .status { margin-top: 12px; min-height: 1.5em; color: var(--muted); white-space: pre-wrap; }
     .warning { border-left: 3px solid #f4c56a; padding-left: 12px; color: #e8d9b8; }
-    .live-stage { position: relative; }
+    .live-stage {
+      position: relative;
+      width: 100%;
+      height: min(78vh, 720px);
+      min-height: 320px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #05070a;
+      border-radius: 12px;
+    }
     #landmarkOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .live-overlay-counter {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 2;
+      min-width: 112px;
+      padding: 10px 14px;
+      border: 1px solid rgba(155, 227, 109, .65);
+      border-radius: 12px;
+      background: rgba(8, 12, 16, .78);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+    }
+    .live-overlay-count { display: block; color: var(--accent); font-size: clamp(2.4rem, 10vw, 4.5rem); font-weight: 900; line-height: .9; }
+    .live-overlay-label { color: #f5f7fb; font-size: .75rem; letter-spacing: .08em; }
     .live-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
     .live-metric { background: #111620; border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; }
     .live-number { font-size: clamp(1.8rem, 9vw, 3rem); font-weight: 800; line-height: 1; }
@@ -90,6 +115,10 @@
     <div class="live-stage">
       <video id="camera" autoplay muted playsinline></video>
       <canvas id="landmarkOverlay"></canvas>
+      <div class="live-overlay-counter" aria-live="polite">
+        <span class="live-overlay-count" id="liveOverlayCount">0</span>
+        <span class="live-overlay-label">SKIPS</span>
+      </div>
     </div>
     <div class="controls">
       <button id="startCamera">Start camera</button>
@@ -105,7 +134,8 @@
       <div class="live-metric"><div class="label">Skips/min</div><div class="live-number" id="livePace">0</div></div>
     </div>
     <p class="muted">
-      Camera access requires localhost or HTTPS. Live mode sends one sampled
+      Camera access requires localhost or HTTPS. Stand far enough back to fit
+      your entire body and both feet inside the preview. Live mode sends one sampled
       frame about every 200 ms, which keeps bandwidth and CPU practical while
       adding up to roughly one sample of latency.
     </p>
@@ -248,8 +278,18 @@
   }
 
   function drawLandmarks(points) {
-    landmarkOverlay.width = camera.videoWidth || 1;
-    landmarkOverlay.height = camera.videoHeight || 1;
+    const stage = camera.parentElement;
+    const stageWidth = stage.clientWidth || 1;
+    const stageHeight = stage.clientHeight || 1;
+    const videoWidth = camera.videoWidth || 1;
+    const videoHeight = camera.videoHeight || 1;
+    const scale = Math.min(stageWidth / videoWidth, stageHeight / videoHeight);
+    const displayedWidth = videoWidth * scale;
+    const displayedHeight = videoHeight * scale;
+    const offsetX = (stageWidth - displayedWidth) / 2;
+    const offsetY = (stageHeight - displayedHeight) / 2;
+    landmarkOverlay.width = stageWidth;
+    landmarkOverlay.height = stageHeight;
     landmarkCtx.clearRect(0, 0, landmarkOverlay.width, landmarkOverlay.height);
     if (!points || !points.length) return;
 
@@ -263,15 +303,15 @@
     for (const [start, end] of connections) {
       if (!points[start] || !points[end]) continue;
       landmarkCtx.beginPath();
-      landmarkCtx.moveTo(points[start].x * landmarkOverlay.width, points[start].y * landmarkOverlay.height);
-      landmarkCtx.lineTo(points[end].x * landmarkOverlay.width, points[end].y * landmarkOverlay.height);
+      landmarkCtx.moveTo(offsetX + points[start].x * displayedWidth, offsetY + points[start].y * displayedHeight);
+      landmarkCtx.lineTo(offsetX + points[end].x * displayedWidth, offsetY + points[end].y * displayedHeight);
       landmarkCtx.stroke();
     }
     landmarkCtx.fillStyle = "#ffffff";
     for (const point of points) {
       if (point.visibility < 0.25) continue;
       landmarkCtx.beginPath();
-      landmarkCtx.arc(point.x * landmarkOverlay.width, point.y * landmarkOverlay.height, 4, 0, 2 * Math.PI);
+      landmarkCtx.arc(offsetX + point.x * displayedWidth, offsetY + point.y * displayedHeight, 4, 0, 2 * Math.PI);
       landmarkCtx.fill();
     }
   }
@@ -305,9 +345,9 @@
 
   async function sampleLiveWorkout(token) {
     while (token === liveLoopToken && liveState === "running" && liveSessionId) {
-      const frame = captureFrame(camera);
-      const elapsed = (performance.now() - liveStartedAt) / 1000;
       try {
+        const frame = captureFrame(camera);
+        const elapsed = (performance.now() - liveStartedAt) / 1000;
         const response = await fetch("/api/live/frame", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -320,6 +360,7 @@
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
         $("liveCount").textContent = data.completed_skips ?? 0;
+        $("liveOverlayCount").textContent = data.completed_skips ?? 0;
         $("liveElapsed").textContent = formatElapsed(data.elapsed_seconds || elapsed);
         $("livePace").textContent = data.estimated_skips_per_minute ?? 0;
         $("liveGuidance").textContent = data.guidance || "";
@@ -428,6 +469,7 @@
       liveStartedAt = performance.now();
       liveState = "running";
       $("liveCount").textContent = "0";
+      $("liveOverlayCount").textContent = "0";
       $("liveElapsed").textContent = "0:00";
       $("livePace").textContent = "0";
       $("liveGuidance").textContent = "Starting pose tracking…";
@@ -461,6 +503,7 @@
     await stopLiveSession();
     liveElapsedSeconds = 0;
     $("liveCount").textContent = "0";
+    $("liveOverlayCount").textContent = "0";
     $("liveElapsed").textContent = "0:00";
     $("livePace").textContent = "0";
     $("liveGuidance").textContent = "Start the workout when your full body is visible.";

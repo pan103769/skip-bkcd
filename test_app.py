@@ -1,5 +1,8 @@
+import base64
+import types
 import unittest
 
+import cv2
 import numpy as np
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -97,6 +100,65 @@ class SamplingContractTests(unittest.TestCase):
         self.assertEqual(data["frames_analyzed"], 1800)
         self.assertEqual(data["requested_fps"], 60)
         self.assertGreaterEqual(data["processing_time_seconds"], 0)
+
+
+class LiveSessionTests(unittest.TestCase):
+    def test_live_session_counts_synthetic_ankle_motion(self):
+        class PoseLandmark:
+            LEFT_HIP = 23
+            RIGHT_HIP = 24
+            LEFT_SHOULDER = 11
+            RIGHT_SHOULDER = 12
+            LEFT_ANKLE = 27
+            RIGHT_ANKLE = 28
+
+        class FakePose:
+            def __init__(self, **kwargs):
+                self.index = 0
+
+            def process(self, image):
+                elapsed = self.index * 0.2
+                self.index += 1
+                points = [types.SimpleNamespace(x=0.5, y=0.5, visibility=1.0) for _ in range(33)]
+                points[11] = types.SimpleNamespace(x=0.4, y=0.3, visibility=1.0)
+                points[12] = types.SimpleNamespace(x=0.6, y=0.3, visibility=1.0)
+                ankle_y = 0.75 - 0.08 * np.sin(2 * np.pi * 0.7 * elapsed)
+                points[23] = types.SimpleNamespace(x=0.45, y=0.55, visibility=1.0)
+                points[24] = types.SimpleNamespace(x=0.55, y=0.55, visibility=1.0)
+                points[27] = types.SimpleNamespace(x=0.45, y=ankle_y, visibility=1.0)
+                points[28] = types.SimpleNamespace(x=0.55, y=ankle_y, visibility=1.0)
+                return types.SimpleNamespace(
+                    pose_landmarks=types.SimpleNamespace(landmark=points)
+                )
+
+            def close(self):
+                pass
+
+        original_pose = app.mp.solutions.pose
+        app.mp.solutions.pose = types.SimpleNamespace(
+            Pose=FakePose,
+            PoseLandmark=PoseLandmark,
+        )
+        try:
+            session = app.LiveSession()
+            ok, encoded = cv2.imencode(
+                ".jpg", np.zeros((32, 32, 3), dtype=np.uint8)
+            )
+            self.assertTrue(ok)
+            frame = "data:image/jpeg;base64," + base64.b64encode(
+                encoded.tobytes()
+            ).decode()
+            result = None
+            for index in range(80):
+                result = session.process(frame, index * 0.2)
+            session.close()
+        finally:
+            app.mp.solutions.pose = original_pose
+
+        self.assertGreaterEqual(result["completed_skips"], 8)
+        self.assertEqual(result["signal_used"], "ankle")
+        self.assertEqual(result["valid_signal_samples"], 80)
+        self.assertEqual(len(result["landmarks"]), 33)
 
 
 if __name__ == "__main__":
