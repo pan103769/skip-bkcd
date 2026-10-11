@@ -441,6 +441,9 @@
   }
 
   $("startCamera").addEventListener("click", async () => {
+    $("startCamera").disabled = true;
+    status("Requesting camera permission…");
+    $("liveGuidance").textContent = "Allow camera access when your browser asks.";
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Camera access requires HTTPS or localhost.");
@@ -460,8 +463,14 @@
       $("stopCamera").disabled = false;
       status("Camera ready.");
     } catch (error) {
-      $("liveGuidance").textContent = `Camera unavailable: ${error.message}`;
-      status("Camera permission is required for Live Workout.");
+      $("startCamera").disabled = false;
+      const message = error.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow it in browser site settings and try again."
+        : error.name === "NotFoundError"
+          ? "No camera was found. Connect a camera and try again."
+          : error.message;
+      $("liveGuidance").textContent = `Camera unavailable: ${message}`;
+      status(message);
     }
   });
 
